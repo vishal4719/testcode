@@ -66,8 +66,17 @@ public class SubmissionController {
                 submissions = mongoTemplate.find(query, Submission.class);
             }
 
+            // Group by userId + questionId, keep only the latest submission
+            Map<String, Submission> latestSubmissions = submissions.stream()
+                .collect(Collectors.toMap(
+                    sub -> sub.getUserId() + "-" + sub.getQuestionId(),
+                    sub -> sub,
+                    (sub1, sub2) -> sub1.getSubmittedAt().isAfter(sub2.getSubmittedAt()) ? sub1 : sub2
+                ));
+            List<Submission> filtered = new java.util.ArrayList<>(latestSubmissions.values());
+
             // Transform submissions to include user and question details
-            List<Map<String, Object>> result = submissions.stream().map(sub -> {
+            List<Map<String, Object>> result = filtered.stream().map(sub -> {
                 Map<String, Object> map = new java.util.HashMap<>();
                 try {
                     User user = userRepository.findByEmail(sub.getUserId());
@@ -88,6 +97,7 @@ public class SubmissionController {
                     map.put("questionTitle", questionTitle);
                     map.put("code", sub.getCode());
                     map.put("testId", testId);
+                    map.put("timeTaken", sub.getTimeTaken());
                 } catch (Exception e) {
                     // If there's an error processing a submission, log it but continue
                     System.err.println("Error processing submission: " + e.getMessage());
@@ -116,5 +126,63 @@ public class SubmissionController {
             return ResponseEntity.ok(Map.of("status", "PENDING"));
         }
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/by-test-user/{testId}")
+    public ResponseEntity<?> getSubmissionsByTestForUser(@PathVariable String testId) {
+        try {
+            Test test = testRepository.findById(new ObjectId(testId)).orElse(null);
+            if (test == null) {
+                return ResponseEntity.badRequest().body("Test not found");
+            }
+            List<Submission> submissions;
+            try {
+                submissions = submissionRepository.findByTest(test);
+                if (submissions.isEmpty()) {
+                    submissions = submissionRepository.findByTest_Id(testId);
+                }
+            } catch (Exception e) {
+                Query query = new Query(Criteria.where("test.$id").is(new ObjectId(testId)));
+                submissions = mongoTemplate.find(query, Submission.class);
+            }
+            // Group by userId + questionId, keep only the latest submission
+            Map<String, Submission> latestSubmissions = submissions.stream()
+                .collect(Collectors.toMap(
+                    sub -> sub.getUserId() + "-" + sub.getQuestionId(),
+                    sub -> sub,
+                    (sub1, sub2) -> sub1.getSubmittedAt().isAfter(sub2.getSubmittedAt()) ? sub1 : sub2
+                ));
+            List<Submission> filtered = new java.util.ArrayList<>(latestSubmissions.values());
+
+            List<Map<String, Object>> result = filtered.stream().map(sub -> {
+                Map<String, Object> map = new java.util.HashMap<>();
+                try {
+                    User user = userRepository.findByEmail(sub.getUserId());
+                    String userName = user != null ? user.getName() : sub.getUserId();
+                    Questions question = null;
+                    String questionTitle = sub.getQuestionId();
+                    try {
+                        question = questionsRepository.findById(new ObjectId(sub.getQuestionId())).orElse(null);
+                        if (question != null) questionTitle = question.getTitle();
+                    } catch (Exception ignored) {}
+                    map.put("id", sub.getId() != null ? sub.getId().toString() : null);
+                    map.put("userId", sub.getUserId());
+                    map.put("userName", userName);
+                    map.put("submittedAt", sub.getSubmittedAt());
+                    map.put("marks", sub.getMarks());
+                    map.put("questionId", sub.getQuestionId());
+                    map.put("questionTitle", questionTitle);
+                    map.put("code", sub.getCode());
+                    map.put("testId", testId);
+                    map.put("timeTaken", sub.getTimeTaken());
+                } catch (Exception e) {
+                    System.err.println("Error processing submission: " + e.getMessage());
+                }
+                return map;
+            }).collect(Collectors.toList());
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("Error fetching submissions: " + e.getMessage());
+        }
     }
 } 

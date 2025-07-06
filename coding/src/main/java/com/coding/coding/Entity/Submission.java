@@ -20,4 +20,5 @@ public class Submission {
     private String code;
     private int marks;
     private LocalDateTime submittedAt;
+    private Long timeTaken; // in milliseconds
 }

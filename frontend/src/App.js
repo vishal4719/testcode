@@ -13,6 +13,7 @@ import TestTakingPage from './TestTakingPage';
 import UserDetails from './Admin/UserDetails';
 import TestResultPage from './Admin/TestResultPage';
 import AdminControllDocs from './Docs/AdminControllDocs';
+import SubmissionsPage from './Test/SubmissionsPage';
 
 function App() {
   return (
@@ -97,6 +98,14 @@ function App() {
               <AdminRoute>
                 <TestResultPage />
               </AdminRoute>
+            }
+          />
+          <Route
+            path="/test/:testId/submissions"
+            element={
+              <UserRoute>
+                <SubmissionsPage />
+              </UserRoute>
             }
           />
         </Routes>

@@ -37,7 +37,8 @@ public class SecurityConfig {
 
         // Allow specific origins
         configuration.setAllowedOrigins(Arrays.asList(
-            "http://192.168.0.106:3000"
+//            "http://172.10.8.166:3000",
+                "http://192.168.0.103:3000"
         )); // Frontend origin
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With"));
@@ -86,7 +87,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/tests/**").permitAll()
 
                         // Allow code run for authenticated users
-                        .requestMatchers(HttpMethod.POST, "/api/code/run").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/code/run").permitAll()
 
                         // Restrict adding/updating/deleting questions to admins only
                         .requestMatchers(HttpMethod.POST, "/api/questions").hasAuthority("ADMIN")

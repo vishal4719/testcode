@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.AmqpTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -26,11 +27,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import org.springframework.scheduling.annotation.Async;
 
 import com.coding.coding.DTO.RunCodeRequest;
 import com.coding.coding.DTO.RunTestCasesRequest;
@@ -41,12 +45,13 @@ import com.coding.coding.Services.QuestionService;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "http://localhost:3000")
+@EnableAsync
 public class CodeExecutionController {
 
     private static final Logger logger = LoggerFactory.getLogger(CodeExecutionController.class);
 
-    private final String JUDGE0_BASE_URL = "http://192.168.0.111:2358";
+    @Value("${judge0.url}")
+    private String judge0BaseUrl;
 
     private final OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -84,145 +89,182 @@ public class CodeExecutionController {
         int languageId = (languageIdObj instanceof String)
                 ? Integer.parseInt((String) languageIdObj)
                 : (Integer) languageIdObj;
-        String submissionId = UUID.randomUUID().toString();
-        RunCodeRequest runReq = new RunCodeRequest();
-        runReq.setSubmissionId(submissionId);
-        runReq.setCode(code);
-        runReq.setLanguageId(languageId);
-        runReq.setStdin(stdin);
-        amqpTemplate.convertAndSend("run-code", runReq);
-        return ResponseEntity.ok(Map.of("submissionId", submissionId));
+        try {
+            // Submit to Judge0
+            String token = submitCode(code, languageId, stdin);
+            Map<String, Object> judgeResult = getExecutionResult(token);
+            // Return the output directly
+            return ResponseEntity.ok(judgeResult);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "Internal server error: " + e.getMessage()));
+        }
     }
 
     @PostMapping("/questions/{questionId}/submit")
-    public ResponseEntity<?> submitQuestionCode(
+    public CompletableFuture<ResponseEntity<?>> submitQuestionCode(
             @PathVariable String questionId,
-            @RequestBody Map<String, Object> request) {
-        try {
-            String code = (String) request.get("code");
-            Object languageIdObj = request.get("languageId");
-            int languageId = (languageIdObj instanceof String)
-                    ? Integer.parseInt((String) languageIdObj)
-                    : (Integer) languageIdObj;
+            @RequestBody Map<String, Object> request,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String code = (String) request.get("code");
+                Object languageIdObj = request.get("languageId");
+                int languageId = (languageIdObj instanceof String)
+                        ? Integer.parseInt((String) languageIdObj)
+                        : (Integer) languageIdObj;
 
-            // 1. Fetch the question and its test cases
-            Questions question = questionsRepository.findById(new ObjectId(questionId))
-                    .orElseThrow(() -> new RuntimeException("Question not found"));
-            List<Questions.TestCase> testCases = question.getTestCases();
+                // 1. Fetch the question and its test cases
+                Questions question = questionsRepository.findById(new ObjectId(questionId))
+                        .orElseThrow(() -> new RuntimeException("Question not found"));
+                List<Questions.TestCase> testCases = question.getTestCases();
 
-            // 2. For each test case, run code and compare output
-            List<Map<String, Object>> results = new ArrayList<>();
-            int passed = 0;
-            for (int i = 0; i < testCases.size(); i++) {
-                Questions.TestCase testCase = testCases.get(i);
-                String input = testCase.getInput();
-                String expected = testCase.getOutput();
+                // 2. For each test case, run code and compare output
+                List<Map<String, Object>> results = new ArrayList<>();
+                int passed = 0;
+                for (int i = 0; i < testCases.size(); i++) {
+                    Questions.TestCase testCase = testCases.get(i);
+                    String input = testCase.getInput();
+                    String expected = testCase.getOutput();
 
-                // Submit to Judge0
-                String token = submitCode(code, languageId, input);
-                Map<String, Object> judgeResult = getExecutionResult(token);
+                    // Submit to Judge0
+                    String token = submitCode(code, languageId, input);
+                    Map<String, Object> judgeResult = getExecutionResult(token);
 
-                String actual = (String) judgeResult.getOrDefault("stdout", "");
-                boolean isPassed = actual != null && actual.trim().equals(expected.trim());
+                    String actual = (String) judgeResult.getOrDefault("stdout", "");
+                    boolean isPassed = actual != null && actual.trim().equals(expected.trim());
 
-                if (isPassed) passed++;
+                    if (isPassed) passed++;
 
-                results.add(Map.of(
-                        "testCase", i + 1,
-                        "input", input,
-                        "expected", expected,
-                        "actual", actual,
-                        "passed", isPassed,
-                        "visible", true // or false for hidden test cases
+                    results.add(Map.of(
+                            "testCase", i + 1,
+                            "input", input,
+                            "expected", expected,
+                            "actual", actual,
+                            "passed", isPassed,
+                            "visible", true // or false for hidden test cases
+                    ));
+                }
+
+                Map<String, Object> summary = Map.of(
+                        "passed", passed,
+                        "total", testCases.size(),
+                        "score", (int) ((passed * 100.0) / testCases.size())
+                );
+
+                // Store submission with timeTaken if possible
+                if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                    String jwt = authHeader.replace("Bearer ", "");
+                    String userId = jwtUtil.extractUsername(jwt);
+                    Submission submission = new Submission();
+                    submission.setUserId(userId);
+                    submission.setQuestionId(questionId);
+                    submission.setCode(code);
+                    submission.setMarks((int) ((passed * 100.0) / testCases.size()));
+                    LocalDateTime submittedAt = LocalDateTime.now();
+                    submission.setSubmittedAt(submittedAt);
+                    // Try to get testId from request if present
+                    String testId = request.get("testId") != null ? request.get("testId").toString() : null;
+                    if (testId != null) {
+                        Test test = testRepository.findById(new ObjectId(testId)).orElse(null);
+                        if (test != null) {
+                            submission.setTest(test);
+                            if (test.getStartDateTime() != null) {
+                                long timeTakenMs = java.time.Duration.between(test.getStartDateTime(), submittedAt).toMillis();
+                                submission.setTimeTaken(timeTakenMs);
+                            }
+                        }
+                    }
+                    submissionRepository.save(submission);
+                }
+
+                return ResponseEntity.ok(Map.of(
+                        "summary", summary,
+                        "results", results
                 ));
+
+            } catch (Exception e) {
+                logger.error("Error submitting code for question {}: {}", questionId, e.getMessage(), e);
+                return ResponseEntity.status(500).body(Map.of("error", "Internal server error: " + e.getMessage()));
             }
-
-            Map<String, Object> summary = Map.of(
-                    "passed", passed,
-                    "total", testCases.size(),
-                    "score", (int) ((passed * 100.0) / testCases.size())
-            );
-
-            return ResponseEntity.ok(Map.of(
-                    "summary", summary,
-                    "results", results
-            ));
-
-        } catch (Exception e) {
-            logger.error("Error submitting code for question {}: {}", questionId, e.getMessage(), e);
-            return ResponseEntity.status(500).body(Map.of("error", "Internal server error: " + e.getMessage()));
-        }
+        });
     }
 
     @PostMapping("/questions/{questionId}/submit-test")
-    public ResponseEntity<?> submitTest(
+    public CompletableFuture<ResponseEntity<?>> submitTest(
             @PathVariable String questionId,
             @RequestBody Map<String, Object> request,
             @RequestHeader("Authorization") String authHeader) {
-        try {
-            String code = (String) request.get("code");
-            Object languageIdObj = request.get("languageId");
-            int languageId = (languageIdObj instanceof String)
-                    ? Integer.parseInt((String) languageIdObj)
-                    : (Integer) languageIdObj;
-            // Get testId from request
-            String testId = (String) request.get("testId");
-            Test test = null;
-            if (testId != null) {
-                test = testRepository.findById(new org.bson.types.ObjectId(testId)).orElse(null);
-                if (test == null) {
-                    return ResponseEntity.badRequest().body(Map.of("error", "Test not found"));
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String code = (String) request.get("code");
+                Object languageIdObj = request.get("languageId");
+                int languageId = (languageIdObj instanceof String)
+                        ? Integer.parseInt((String) languageIdObj)
+                        : (Integer) languageIdObj;
+                // Get testId from request
+                String testId = (String) request.get("testId");
+                Test test = null;
+                if (testId != null) {
+                    test = testRepository.findById(new org.bson.types.ObjectId(testId)).orElse(null);
+                    if (test == null) {
+                        return ResponseEntity.badRequest().body(Map.of("error", "Test not found"));
+                    }
                 }
+
+                // 1. Fetch the question and its test cases
+                Questions question = questionsRepository.findById(new ObjectId(questionId))
+                        .orElseThrow(() -> new RuntimeException("Question not found"));
+                List<Questions.TestCase> testCases = question.getTestCases();
+
+                // 2. For each test case, run code and compare output
+                int passed = 0;
+                for (Questions.TestCase testCase : testCases) {
+                    String input = testCase.getInput();
+                    String expected = testCase.getOutput();
+                    String token = submitCode(code, languageId, input);
+                    Map<String, Object> judgeResult = getExecutionResult(token);
+                    String actual = (String) judgeResult.getOrDefault("stdout", "");
+                    boolean isPassed = actual != null && actual.trim().equals(expected.trim());
+                    if (isPassed) passed++;
+                }
+
+                // 3. Calculate marks
+                int marks = passed * 10; // 1 pass = 10, 2 = 20, ..., 5 = 50
+
+                // 4. Extract userId from JWT
+                String jwt = authHeader.replace("Bearer ", "");
+                String userId = jwtUtil.extractUsername(jwt);
+
+                // 5. Always create a new submission for test submissions
+                Submission submission = new Submission();
+                submission.setUserId(userId);
+                submission.setQuestionId(questionId);
+                submission.setCode(code);
+                submission.setMarks(marks);
+                LocalDateTime submittedAt = LocalDateTime.now();
+                submission.setSubmittedAt(submittedAt);
+                if (test != null) {
+                    submission.setTest(test);
+                    if (test.getStartDateTime() != null) {
+                        long timeTakenMs = java.time.Duration.between(test.getStartDateTime(), submittedAt).toMillis();
+                        submission.setTimeTaken(timeTakenMs);
+                    }
+                }
+                submissionRepository.save(submission);
+                logger.info("Created new test submission for user {} and question {} with marks {}", userId, questionId, marks);
+
+                return ResponseEntity.ok(Map.of(
+                        "marks", marks,
+                        "passed", passed,
+                        "total", testCases.size(),
+                        "submissionId", submission.getId()
+                ));
+
+            } catch (Exception e) {
+                logger.error("Error submitting test: {}", e.getMessage(), e);
+                return ResponseEntity.status(500).body(Map.of("error", "Internal server error: " + e.getMessage()));
             }
-
-            // 1. Fetch the question and its test cases
-            Questions question = questionsRepository.findById(new ObjectId(questionId))
-                    .orElseThrow(() -> new RuntimeException("Question not found"));
-            List<Questions.TestCase> testCases = question.getTestCases();
-
-            // 2. For each test case, run code and compare output
-            int passed = 0;
-            for (Questions.TestCase testCase : testCases) {
-                String input = testCase.getInput();
-                String expected = testCase.getOutput();
-                String token = submitCode(code, languageId, input);
-                Map<String, Object> judgeResult = getExecutionResult(token);
-                String actual = (String) judgeResult.getOrDefault("stdout", "");
-                boolean isPassed = actual != null && actual.trim().equals(expected.trim());
-                if (isPassed) passed++;
-            }
-
-            // 3. Calculate marks
-            int marks = passed * 10; // 1 pass = 10, 2 = 20, ..., 5 = 50
-
-            // 4. Extract userId from JWT
-            String jwt = authHeader.replace("Bearer ", "");
-            String userId = jwtUtil.extractUsername(jwt);
-
-            // 5. Always create a new submission for test submissions
-            Submission submission = new Submission();
-            submission.setUserId(userId);
-            submission.setQuestionId(questionId);
-            submission.setCode(code);
-            submission.setMarks(marks);
-            submission.setSubmittedAt(LocalDateTime.now());
-            if (test != null) {
-                submission.setTest(test);
-            }
-            submissionRepository.save(submission);
-            logger.info("Created new test submission for user {} and question {} with marks {}", userId, questionId, marks);
-
-            return ResponseEntity.ok(Map.of(
-                    "marks", marks,
-                    "passed", passed,
-                    "total", testCases.size(),
-                    "submissionId", submission.getId()
-            ));
-
-        } catch (Exception e) {
-            logger.error("Error submitting test: {}", e.getMessage(), e);
-            return ResponseEntity.status(500).body(Map.of("error", "Internal server error: " + e.getMessage()));
-        }
+        });
     }
 
     @PostMapping("/run-test-cases")
@@ -234,25 +276,27 @@ public class CodeExecutionController {
     }
 
     @PostMapping("/code/execute")
-    public ResponseEntity<CodeExecutionResponse> executeCode(@RequestBody CodeExecutionRequest request) {
-        try {
-            ObjectId questionId = new ObjectId(request.getQuestionId());
-            Questions question = questionService.getQuestionById(questionId);
-            if (question == null) {
+    public CompletableFuture<ResponseEntity<CodeExecutionResponse>> executeCode(@RequestBody CodeExecutionRequest request) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                ObjectId questionId = new ObjectId(request.getQuestionId());
+                Questions question = questionService.getQuestionById(questionId);
+                if (question == null) {
+                    CodeExecutionResponse response = new CodeExecutionResponse();
+                    response.setSuccess(false);
+                    response.setError("Question not found");
+                    return ResponseEntity.badRequest().body(response);
+                }
+
+                CodeExecutionResponse response = codeExecutionService.executeCode(request, question);
+                return ResponseEntity.ok(response);
+            } catch (Exception e) {
                 CodeExecutionResponse response = new CodeExecutionResponse();
                 response.setSuccess(false);
-                response.setError("Question not found");
-                return ResponseEntity.badRequest().body(response);
+                response.setError("Error executing code: " + e.getMessage());
+                return ResponseEntity.internalServerError().body(response);
             }
-
-            CodeExecutionResponse response = codeExecutionService.executeCode(request, question);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            CodeExecutionResponse response = new CodeExecutionResponse();
-            response.setSuccess(false);
-            response.setError("Error executing code: " + e.getMessage());
-            return ResponseEntity.internalServerError().body(response);
-        }
+        });
     }
 
     private String sanitizeInput(String input) {
@@ -287,7 +331,7 @@ public class CodeExecutionController {
         okhttp3.RequestBody body = okhttp3.RequestBody.create(json, mediaType);
 
         Request request = new Request.Builder()
-                .url(JUDGE0_BASE_URL + "/submissions?base64_encoded=false&wait=false")
+                .url(judge0BaseUrl + "/submissions?base64_encoded=false&wait=false")
                 .post(body)
                 .addHeader("content-type", "application/json")
                 .build();
@@ -306,7 +350,7 @@ public class CodeExecutionController {
 
     private Map<String, Object> getExecutionResult(String token) throws IOException, InterruptedException {
         Request request = new Request.Builder()
-                .url(JUDGE0_BASE_URL + "/submissions/" + token + "?base64_encoded=false&fields=*")
+                .url(judge0BaseUrl + "/submissions/" + token + "?base64_encoded=false&fields=*")
                 .get()
                 .build();
 

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 @RestController
 @RequestMapping("/api/questions")
@@ -25,9 +26,11 @@ public class QuestionsController {
 
     // Add this endpoint for adding multiple questions at once
     @PostMapping("/bulk")
-    public ResponseEntity<List<Questions>> addMultipleQuestions(@RequestBody List<Questions> questions) {
-        List<Questions> savedQuestions = questionsService.addMultipleQuestions(questions);
-        return ResponseEntity.ok(savedQuestions);
+    public CompletableFuture<ResponseEntity<List<Questions>>> addMultipleQuestions(@RequestBody List<Questions> questions) {
+        return CompletableFuture.supplyAsync(() -> {
+            List<Questions> savedQuestions = questionsService.addMultipleQuestions(questions);
+            return ResponseEntity.ok(savedQuestions);
+        });
     }
 
     @GetMapping

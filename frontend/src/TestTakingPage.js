@@ -4,6 +4,7 @@ import axios from 'axios';
 import MonacoEditor from '@monaco-editor/react';
 import { useAuth } from './Authentication/AuthContext';
 import { useLogout } from './Authentication/Logout';
+import UserNavbar from './components/UserNavbar';
 
 // Default code for each language with comprehensive imports
 const DEFAULT_CODE = {
@@ -206,11 +207,12 @@ function TestTakingPage() {
   const [showTestEndedModal, setShowTestEndedModal] = useState(false);
   const [autoSubmitMarks, setAutoSubmitMarks] = useState(null);
   const navigate = useNavigate();
-  const logoutUser = useLogout();
   const [violationCount, setViolationCount] = useState(0);
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [testStarted, setTestStarted] = useState(false);
   const [activeTab, setActiveTab] = useState('problem');
+  const logoutUser = useLogout();
+  
 
   // Fetch test details and check if test is active
   useEffect(() => {
@@ -255,73 +257,6 @@ function TestTakingPage() {
     return () => clearInterval(interval);
     // eslint-disable-next-line
   }, [test]);
-
-  // Fullscreen and anti-tab-switch logic
-  useEffect(() => {
-    if (!testStarted) return;
-    // Handler for fullscreen exit or tab switch
-    const handleViolation = () => {
-      setViolationCount(prev => {
-        const next = prev + 1;
-        if (next < 3) {
-          setShowWarningModal(true);
-          // Try to re-enter fullscreen after 1 second
-          setTimeout(() => {
-            const elem = document.documentElement;
-            if (elem.requestFullscreen) elem.requestFullscreen();
-            else if (elem.mozRequestFullScreen) elem.mozRequestFullScreen();
-            else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
-            else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
-          }, 1000);
-        } else {
-          // Auto-submit and logout
-          setIsLocked(true);
-          handleAutoSubmitTest();
-          setTimeout(() => {
-            logoutUser();
-            navigate('/');
-          }, 2000);
-        }
-        return next;
-      });
-    };
-
-    // Listen for fullscreen change
-    const fullscreenChangeEvents = [
-      'fullscreenchange',
-      'webkitfullscreenchange',
-      'mozfullscreenchange',
-      'MSFullscreenChange'
-    ];
-    const fullscreenListener = () => {
-      if (!document.fullscreenElement &&
-          !document.webkitFullscreenElement &&
-          !document.mozFullScreenElement &&
-          !document.msFullscreenElement) {
-        handleViolation();
-      }
-    };
-    fullscreenChangeEvents.forEach(event => {
-      document.addEventListener(event, fullscreenListener);
-    });
-
-    // Listen for tab/window switch
-    const handleVisibility = () => {
-      if (document.visibilityState === 'hidden') {
-        handleViolation();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    // Clean up
-    return () => {
-      fullscreenChangeEvents.forEach(event => {
-        document.removeEventListener(event, fullscreenListener);
-      });
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-    // eslint-disable-next-line
-  }, [testStarted]);
 
   // Start test handler (triggered by button)
   const handleStartTest = () => {
@@ -439,6 +374,10 @@ function TestTakingPage() {
     navigate('/');
   };
 
+  const handleShowSubmissions = () => {
+    navigate(`/test/${testId}/submissions`);
+  };
+
   useEffect(() => {
     if (!testId || !user) return;
     // Connect to websocket for this test and user
@@ -498,6 +437,12 @@ function TestTakingPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <UserNavbar
+        showSubmission={true}
+        onSubmissionClick={handleShowSubmissions}
+        user={user}
+        onLogout={handleLogout}
+      />
       {/* Start Test Modal */}
       {!testStarted && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-70 z-50 backdrop-blur-sm">
@@ -561,13 +506,6 @@ function TestTakingPage() {
                       </div>
                     </>
                   )}
-                  {/* Logout Button */}
-                  <button
-                    onClick={handleLogout}
-                    className="ml-4 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  >
-                    Logout
-                  </button>
                 </div>
               </div>
             </div>
@@ -781,7 +719,16 @@ function TestTakingPage() {
                                 <span className="font-semibold">Passed:</span> {testcaseResults.summary.passed}/{testcaseResults.summary.total}
                               </div>
                               <div className="text-blue-400">
-                                <span className="font-semibold">Score:</span> {testcaseResults.summary.score}%
+                                <span className="font-semibold">Score:</span> {
+                                  (() => {
+                                    // Custom marks logic: test cases 1,2 = 0 marks; 3-7 = 10 marks each
+                                    let marks = 0;
+                                    testcaseResults.results.forEach((tc, idx) => {
+                                      if (tc.passed && idx >= 2 && idx < 7) marks += 10;
+                                    });
+                                    return marks;
+                                  })()
+                                } / 50
                               </div>
                             </div>
                           </div>
@@ -799,35 +746,53 @@ function TestTakingPage() {
                               </thead>
                               <tbody>
                                 {testcaseResults.results.map((tc, index) => (
-                                  <tr key={tc.testCase} className="border-b border-gray-700 hover:bg-gray-800 transition-colors">
-                                    <td className="px-4 py-3 text-gray-300">{tc.testCase}</td>
-                                    <td className="px-4 py-3">
-                                      <pre className="text-gray-300 text-sm bg-gray-800 p-2 rounded max-w-xs overflow-x-auto">
-                                        {tc.input}
-                                      </pre>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <pre className="text-gray-300 text-sm bg-gray-800 p-2 rounded max-w-xs overflow-x-auto">
-                                        {tc.expected}
-                                      </pre>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <pre className="text-gray-300 text-sm bg-gray-800 p-2 rounded max-w-xs overflow-x-auto">
-                                        {tc.actual}
-                                      </pre>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      {tc.passed ? (
-                                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-900 text-green-200 border border-green-700">
-                                          ✅ Passed
-                                        </span>
-                                      ) : (
-                                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-900 text-red-200 border border-red-700">
-                                          ❌ Failed
-                                        </span>
-                                      )}
-                                    </td>
-                                  </tr>
+                                  index < 2 ? (
+                                    <tr key={tc.testCase} className="border-b border-gray-700 hover:bg-gray-800 transition-colors">
+                                      <td className="px-4 py-3 text-gray-300">{tc.testCase}</td>
+                                      <td className="px-4 py-3">
+                                        <pre className="text-gray-300 text-sm bg-gray-800 p-2 rounded max-w-xs overflow-x-auto">
+                                          {tc.input}
+                                        </pre>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <pre className="text-gray-300 text-sm bg-gray-800 p-2 rounded max-w-xs overflow-x-auto">
+                                          {tc.expected}
+                                        </pre>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <pre className="text-gray-300 text-sm bg-gray-800 p-2 rounded max-w-xs overflow-x-auto">
+                                          {tc.actual}
+                                        </pre>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {tc.passed ? (
+                                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-900 text-green-200 border border-green-700">
+                                            ✅ Passed
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-900 text-red-200 border border-red-700">
+                                            ❌ Failed
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    <tr key={tc.testCase} className="border-b border-gray-700 hover:bg-gray-800 transition-colors">
+                                      <td className="px-4 py-3 text-gray-300">{tc.testCase}</td>
+                                      <td className="px-4 py-3 text-gray-400 italic" colSpan={3}>Hidden</td>
+                                      <td className="px-4 py-3">
+                                        {tc.passed ? (
+                                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-900 text-green-200 border border-green-700">
+                                            ✅ Passed
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-900 text-red-200 border border-red-700">
+                                            ❌ Failed
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  )
                                 ))}
                               </tbody>
                             </table>

@@ -22,7 +22,7 @@ function AddQuestionForm() {
       },
       sampleInput: '5\n1 2 3 4 5',
       sampleOutput: '15',
-      testCases: Array(5).fill({ input: '', output: '', explanation: '' }),
+      testCases: Array(7).fill({ input: '', output: '', explanation: '' }),
       constraints: '',
       timeLimit: 1000, // in milliseconds
       memoryLimit: 256 // in MB
@@ -136,7 +136,7 @@ function AddQuestionForm() {
           outputStructure: { ...questionTemplates.array.outputStructure },
           sampleInput: questionTemplates.array.sampleInput,
           sampleOutput: questionTemplates.array.sampleOutput,
-          testCases: Array(5).fill({ input: '', output: '', explanation: '' }),
+          testCases: Array(7).fill({ input: '', output: '', explanation: '' }),
           constraints: '',
           timeLimit: 1000,
           memoryLimit: 256
@@ -212,7 +212,7 @@ function AddQuestionForm() {
           outputStructure: { ...questionTemplates.array.outputStructure },
           sampleInput: questionTemplates.array.sampleInput,
           sampleOutput: questionTemplates.array.sampleOutput,
-          testCases: Array(5).fill({ input: '', output: '', explanation: '' }),
+          testCases: Array(7).fill({ input: '', output: '', explanation: '' }),
           constraints: '',
           timeLimit: 1000,
           memoryLimit: 256

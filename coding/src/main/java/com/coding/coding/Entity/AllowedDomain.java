@@ -10,6 +10,15 @@ import okhttp3.internal.platform.OpenJSSEPlatform;
 public class AllowedDomain {
     @Id
     private String id;
+
+    public String getDomain() {
+        return domain;
+    }
+
+    public void setDomain(String domain) {
+        this.domain = domain;
+    }
+
     private String domain;
 
     // constructors, getters, setters

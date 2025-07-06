@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.concurrent.CompletableFuture;
 
 @RestController
 @RequestMapping("/admin")
@@ -101,9 +102,9 @@ public class AdminController {
     }
     @GetMapping("users/all")
     @PreAuthorize("hasAuthority('ADMIN')")
-    public ResponseEntity<List<User>> getAllUsers() {
-        List<User> users = userService.getAllUsers();
-        return ResponseEntity.ok(users);
+    public CompletableFuture<ResponseEntity<List<User>>> getAllUsers() {
+        return userService.getAllUsersAsync()
+                .thenApply(ResponseEntity::ok);
     }
 
 //
@@ -128,6 +129,17 @@ public class AdminController {
             return new ResponseEntity<>(HttpStatus.OK);
         }
         return new ResponseEntity<>("Access Denied", HttpStatus.FORBIDDEN);
+    }
+
+    @DeleteMapping("/users/{id}/clear-status")
+    @PreAuthorize("hasAuthority('ADMIN')")
+    public ResponseEntity<?> clearUserStatus(@PathVariable String id) {
+        try {
+            userService.forceLogoutUserById(new org.bson.types.ObjectId(id));
+            return ResponseEntity.ok("User status cleared and user logged out everywhere");
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to clear user status: " + e.getMessage());
+        }
     }
 
 

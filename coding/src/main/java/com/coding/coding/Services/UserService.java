@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import org.springframework.scheduling.annotation.Async;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 public class UserService {
@@ -18,6 +20,9 @@ public class UserService {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private JwtBlacklistService jwtBlacklistService;
 
     public void saveNewUser(User user) {
         // Encode the password before saving
@@ -48,6 +53,7 @@ public class UserService {
         }
 
         user.setCurrentSessionToken(jwtToken);
+        user.setLoggedIn(true);
         user.setLastLogin(LocalDateTime.now());
         userRepository.save(user);
     }
@@ -75,6 +81,7 @@ public class UserService {
         User user = userRepository.findByEmail(email);
         if (user != null) {
             user.setCurrentSessionToken(null);
+            user.setLoggedIn(false);
             userRepository.save(user);
         }
     }
@@ -101,5 +108,27 @@ public class UserService {
             user.setLastLogin(LocalDateTime.now());
             userRepository.save(user);
         }
+    }
+
+    public void updateUserStatus(User user) {
+        userRepository.save(user);
+    }
+
+    /**
+     * Force logout a user by blacklisting their current session token and clearing status.
+     */
+    public void forceLogoutUserById(ObjectId id) {
+        User user = getUserById(id);
+        if (user != null && user.getCurrentSessionToken() != null) {
+            jwtBlacklistService.blacklistToken(user.getCurrentSessionToken());
+            user.setCurrentSessionToken(null);
+            user.setLoggedIn(false);
+            userRepository.save(user);
+        }
+    }
+
+    @Async
+    public CompletableFuture<List<User>> getAllUsersAsync() {
+        return CompletableFuture.completedFuture(userRepository.findAll());
     }
 }

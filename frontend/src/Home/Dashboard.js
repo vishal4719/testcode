@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../Authentication/AuthContext';
 import { useLogout } from '../Authentication/Logout';
 import UserDashboard from './UserDashboard';
+import logo from '../Images/logo.png';
 
 function Dashboard() {
   const { user } = useAuth();
@@ -25,7 +26,15 @@ function Dashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center space-x-8">
-              <h1 className="text-xl font-bold text-orange-600">Test Management System</h1>
+              <div className="flex items-center space-x-2">
+                <img 
+                  src={logo} 
+                  alt="Logo" 
+                  className="h-8 w-auto cursor-pointer hover:opacity-80 transition-opacity" 
+                  onClick={() => window.location.reload()}
+                />
+                <h1 className="text-xl font-bold text-orange-600">Vcoding</h1>
+              </div>
               <Link
                 to="/compiler"
                 className="text-gray-700 hover:text-orange-600 transition-colors"
